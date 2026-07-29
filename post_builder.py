@@ -92,7 +92,7 @@ def build_post_files_payload(
     attachments = attachments or []
     slug = slugify(title)
     if not post_date:
-        post_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        post_date = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
     post_format = os.getenv("BLOG_POST_FORMAT", "single_file").lower()
     content_path = os.getenv("BLOG_CONTENT_PATH", "src/content/blog").strip("/")
