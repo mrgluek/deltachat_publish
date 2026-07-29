@@ -15,7 +15,7 @@ import database
 from forgejo_client import ForgejoClient
 from post_builder import parse_message_text, build_post_files_payload
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("deltachat_publish")
@@ -273,6 +273,31 @@ def on_init(bot, _args):
 @dc_cli.on_start
 def on_start(bot, _args):
     bot.logger.info(f"🚀 Delta Chat Publish Bot v{VERSION} is running. Waiting for events...")
+
+    try:
+        import io
+        try:
+            import qrcode
+        except ImportError:
+            qrcode = None
+
+        accounts = bot.rpc.get_all_account_ids()
+        if accounts:
+            accid = accounts[0]
+            if bot.rpc.is_configured(accid):
+                qrdata = bot.rpc.get_chat_securejoin_qr_code(accid, None)
+                print("\nTo add this bot, scan the QR code or copy the link:\n")
+                if qrcode:
+                    qr = qrcode.QRCode(version=1, box_size=1, border=2)
+                    qr.add_data(qrdata)
+                    qr.make(fit=True)
+                    f = io.StringIO()
+                    qr.print_ascii(out=f)
+                    print(f.getvalue())
+                print(qrdata)
+                print("\n" + "=" * 50 + "\n")
+    except Exception as e:
+        bot.logger.error(f"Failed to generate QR code: {e}")
 
 
 def main():
