@@ -315,6 +315,12 @@ def main():
     database.init_db()
     logger.info(f"Starting Delta Chat Publish Bot v{VERSION}...")
     
+    # Ensure default config_dir uses persistent /app/data volume if available
+    if "-c" not in sys.argv and "--config-dir" not in sys.argv:
+        default_dir = "/app/data" if os.path.exists("/app/data") else "data"
+        sys.argv.insert(1, "-c")
+        sys.argv.insert(2, default_dir)
+
     # Parse CLI arguments and start bot
     dc_cli.start()
 
