@@ -153,6 +153,16 @@ def get_recent_posts(limit: int = 5) -> List[Dict[str, Any]]:
         ]
 
 
+def get_posts_count() -> int:
+    with _lock:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM published_posts")
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else 0
+
+
 def update_transport_stats(addr: str, sent: bool = False, received: bool = False):
     with _lock:
         conn = get_connection()

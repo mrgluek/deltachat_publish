@@ -143,23 +143,222 @@ def on_new_message(bot, accid: int, event):
             bot.rpc.send_msg(accid, chat_id, MsgData(text="\n".join(lines)))
             return
 
-        elif cmd in ("/transports", "/addtransport", "/rmtransport", "/setprimary", "/resilient"):
-            # Standard transport management placeholder
-            bot.rpc.send_msg(
-                accid, chat_id,
-                MsgData(text=f"ℹ️ Transport administration for {cmd}: Default primary transport is active.")
+        elif cmd == "/stats":
+            posts_count = database.get_posts_count()
+            stats = database.get_all_transport_stats()
+            stats_map = {s['addr']: s for s in stats}
+
+            # Get connectivity
+            connectivity_label = "❓ Unknown"
+            try:
+                connectivity = bot.rpc.get_connectivity(accid)
+                if connectivity >= 4000:
+                    connectivity_label = "🟢 Connected"
+                elif connectivity >= 3000:
+                    connectivity_label = "🔄 Working"
+                elif connectivity >= 2000:
+                    connectivity_label = "🟡 Connecting"
+                else:
+                    connectivity_label = "🔴 Not connected"
+            except Exception:
+                pass
+
+            reply = (
+                f"📊 **Delta Chat Publish Bot Statistics**\n\n"
+                f"• Posts published: {posts_count}\n"
+                f"• Network: {connectivity_label}\n\n"
+                f"**Transport Statistics:**\n"
             )
+            if stats:
+                for s in stats:
+                    reply += f"• `{s['addr']}`: 📤 Sent {s['msgs_sent']}  📥 Received {s['msgs_received']}\n"
+            else:
+                reply += "No transport stats recorded yet.\n"
+
+            bot.rpc.send_msg(accid, chat_id, MsgData(text=reply))
             return
 
-        elif cmd == "/stats":
-            stats = database.get_all_transport_stats()
-            if not stats:
-                bot.rpc.send_msg(accid, chat_id, MsgData(text="📊 No transport stats recorded yet."))
+        elif cmd == "/transports":
+            if not database.is_authorized_sender(sender_email, fingerprint):
+                bot.rpc.send_msg(accid, chat_id, MsgData(text="❌ This command is only for the administrator."))
                 return
-            lines = ["📊 Transport Statistics:\n"]
-            for s in stats:
-                lines.append(f"• `{s['addr']}`: Sent {s['msgs_sent']}, Received {s['msgs_received']}")
-            bot.rpc.send_msg(accid, chat_id, MsgData(text="\n".join(lines)))
+
+            try:
+                transports = bot.rpc.list_transports(accid)
+            except Exception as e:
+                bot.rpc.send_msg(accid, chat_id, MsgData(text=f"❌ Failed to list transports: {e}"))
+                return
+
+            if not transports:
+                bot.rpc.send_msg(accid, chat_id, MsgData(text="No transports configured."))
+                return
+
+            connectivity_label = "❓ Unknown"
+            try:
+                connectivity = bot.rpc.get_connectivity(accid)
+                if connectivity >= 4000:
+                    connectivity_label = "🟢 Connected"
+                elif connectivity >= 3000:
+                    connectivity_label = "🔄 Working"
+                elif connectivity >= 2000:
+                    connectivity_label = "🟡 Connecting"
+                else:
+                    connectivity_label = "🔴 Not connected"
+            except Exception:
+                pass
+
+            connectivity_html = ""
+            try:
+                connectivity_html = bot.rpc.get_connectivity_html(accid)
+            except Exception:
+                pass
+
+            resilient_on = database.get_config("resilient") == "1"
+
+            stats_map = {s['addr']: s for s in database.get_all_transport_stats()}
+            active_addr = bot.rpc.get_config(accid, "configured_addr") or bot.rpc.get_config(accid, "addr")
+            transport_addrs = [
+                (t.get('addr', '') if isinstance(t, dict) else getattr(t, 'addr', ''))
+                for t in transports
+            ]
+
+            import re as _re
+            reply = f"🔌 **Mail Relays (Transports)**\n\nStatus: {connectivity_label}\n\n"
+            for addr in transport_addrs:
+                status_label = "❓ Unknown"
+                if connectivity_html:
+                    domain = addr.split('@')[-1] if '@' in addr else addr
+                    pattern = rf'class="([^"]+)\s+dot".*?<b>{_re.escape(domain)}:</b>\s*([^<]+)'
+                    match = _re.search(pattern, connectivity_html, _re.IGNORECASE)
+                    if match:
+                        color = match.group(1).lower()
+                        status_text_m = match.group(2).strip().lower()
+                        if "yellow" in color or "connecting" in status_text_m:
+                            status_label = "🟡 Connecting"
+                        elif "green" in color:
+                            status_label = "🔄 Working"
+                        elif "red" in color or "lost" in status_text_m or "error" in status_text_m:
+                            status_label = "🔴 Not connected"
+
+                is_used = resilient_on or (addr == active_addr)
+                used_str = " ✔︎ Used for sending:" if is_used else ":"
+                reply += f"**{status_label}**{used_str} `{addr}`\n"
+
+                s = stats_map.get(addr)
+                if s:
+                    reply += f"  📤 Sent: {s['msgs_sent']}  📥 Received: {s['msgs_received']}\n"
+                    if s.get('last_sent_at'):
+                        import datetime as _dt
+                        last_sent = _dt.datetime.fromtimestamp(s['last_sent_at']).strftime('%Y-%m-%d %H:%M')
+                        reply += f"  Last sent: {last_sent}\n"
+                    if s.get('last_received_at'):
+                        import datetime as _dt
+                        last_recv = _dt.datetime.fromtimestamp(s['last_received_at']).strftime('%Y-%m-%d %H:%M')
+                        reply += f"  Last received: {last_recv}\n"
+                else:
+                    reply += f"  📤 Sent: 0  📥 Received: 0\n"
+                reply += "\n"
+
+            reply += f"Total transports: {len(transport_addrs)}"
+            bot.rpc.send_msg(accid, chat_id, MsgData(text=reply))
+            return
+
+        elif cmd == "/addtransport":
+            if not database.is_authorized_sender(sender_email, fingerprint):
+                bot.rpc.send_msg(accid, chat_id, MsgData(text="❌ This command is only for the administrator."))
+                return
+
+            payload = text[len("/addtransport"):].strip()
+            if not payload:
+                bot.rpc.send_msg(accid, chat_id, MsgData(
+                    text="Usage:\n/addtransport DCACCOUNT:server.example\n/addtransport user@example.com password123"
+                ))
+                return
+
+            try:
+                if payload.startswith("DCACCOUNT:") or payload.startswith("http"):
+                    bot.rpc.add_transport_from_qr(accid, payload)
+                    bot.rpc.send_msg(accid, chat_id, MsgData(text="✅ Backup transport added via chatmail URI."))
+                else:
+                    parts = payload.split(None, 1)
+                    if len(parts) < 2:
+                        bot.rpc.send_msg(accid, chat_id, MsgData(
+                            text="❌ Provide both address and password:\n/addtransport user@example.com password123"
+                        ))
+                        return
+                    t_addr, t_pw = parts[0], parts[1]
+                    bot.rpc.add_or_update_transport(accid, {"addr": t_addr, "password": t_pw})
+                    bot.rpc.send_msg(accid, chat_id, MsgData(text=f"✅ Backup transport `{t_addr}` added."))
+            except Exception as e:
+                bot.rpc.send_msg(accid, chat_id, MsgData(text=f"❌ Failed to add transport: {e}"))
+            return
+
+        elif cmd == "/rmtransport":
+            if not database.is_authorized_sender(sender_email, fingerprint):
+                bot.rpc.send_msg(accid, chat_id, MsgData(text="❌ This command is only for the administrator."))
+                return
+
+            t_addr = text[len("/rmtransport"):].strip()
+            if not t_addr:
+                bot.rpc.send_msg(accid, chat_id, MsgData(text="Usage: /rmtransport user@example.com"))
+                return
+
+            try:
+                transports = bot.rpc.list_transports(accid)
+                transport_addrs = [
+                    (t.get('addr', '') if isinstance(t, dict) else getattr(t, 'addr', ''))
+                    for t in transports
+                ]
+                if len(transport_addrs) <= 1:
+                    bot.rpc.send_msg(accid, chat_id, MsgData(text="❌ Cannot remove the last transport. Add another one first."))
+                    return
+                if t_addr not in transport_addrs:
+                    bot.rpc.send_msg(accid, chat_id, MsgData(text=f"❌ Transport `{t_addr}` not found. Use /transports to see configured relays."))
+                    return
+                bot.rpc.delete_transport(accid, t_addr)
+                bot.rpc.send_msg(accid, chat_id, MsgData(text=f"✅ Transport `{t_addr}` removed."))
+            except Exception as e:
+                bot.rpc.send_msg(accid, chat_id, MsgData(text=f"❌ Failed to remove transport: {e}"))
+            return
+
+        elif cmd == "/setprimary":
+            if not database.is_authorized_sender(sender_email, fingerprint):
+                bot.rpc.send_msg(accid, chat_id, MsgData(text="❌ Only the bot administrator can use /setprimary."))
+                return
+
+            t_addr = text[len("/setprimary"):].strip()
+            if not t_addr:
+                bot.rpc.send_msg(accid, chat_id, MsgData(text="Usage: /setprimary user@example.com"))
+                return
+
+            try:
+                bot.rpc.set_config(accid, "configured_addr", t_addr)
+                bot.rpc.send_msg(accid, chat_id, MsgData(text=f"✅ Primary address is now `{t_addr}`."))
+            except Exception as e:
+                bot.rpc.send_msg(accid, chat_id, MsgData(text=f"❌ Failed to set primary address: {e}"))
+            return
+
+        elif cmd == "/resilient":
+            if not database.is_authorized_sender(sender_email, fingerprint):
+                bot.rpc.send_msg(accid, chat_id, MsgData(text="❌ Only the bot administrator can use /resilient."))
+                return
+
+            arg = text[len("/resilient"):].strip().lower()
+            try:
+                current = database.get_config("resilient") == "1"
+                if not arg:
+                    status = "enabled" if current else "disabled"
+                    bot.rpc.send_msg(accid, chat_id, MsgData(text=f"ℹ️ Resilient sending mode is currently {status}."))
+                elif arg in ("on", "1", "true"):
+                    database.set_config("resilient", "1")
+                    bot.rpc.send_msg(accid, chat_id, MsgData(text="✅ Resilient sending mode enabled."))
+                elif arg in ("off", "0", "false"):
+                    database.set_config("resilient", "0")
+                    bot.rpc.send_msg(accid, chat_id, MsgData(text="❌ Resilient sending mode disabled."))
+                else:
+                    bot.rpc.send_msg(accid, chat_id, MsgData(text="❌ Invalid argument. Use '/resilient on', '/resilient off', or '/resilient' to get status."))
+            except Exception as e:
+                bot.rpc.send_msg(accid, chat_id, MsgData(text=f"❌ Failed to update resilient mode: {e}"))
             return
 
     # Check Authorization for publishing
