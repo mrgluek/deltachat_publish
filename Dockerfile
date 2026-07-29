@@ -16,4 +16,4 @@ VOLUME /app/data
 ENV DB_PATH=/app/data/publish.db
 ENV PYTHONUNBUFFERED=1
 
-CMD ["python", "bot.py", "-c", "/app/data", "serve"]
+CMD ["python", "-u", "bot.py", "serve"]
