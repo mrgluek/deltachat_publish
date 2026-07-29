@@ -15,6 +15,4 @@ COPY . .
 VOLUME /app/data
 ENV DB_PATH=/app/data/publish.db
 
-EXPOSE 8080
-
 CMD ["python", "bot.py", "serve"]
