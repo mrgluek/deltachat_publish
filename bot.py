@@ -8,7 +8,7 @@ import tempfile
 import time
 from typing import Optional
 
-from deltachat2 import events, MsgData, Bot
+from deltachat2 import events, MsgData
 from deltabot_cli import BotCli
 
 import database
@@ -52,7 +52,7 @@ def get_help_message() -> str:
 
 
 @events.on(events.NewMessage)
-async def on_new_message(bot: Bot, accid: int, msg: MsgData):
+async def on_new_message(bot, accid: int, msg: MsgData):
     sender_addr = msg.from_id
     if not sender_addr:
         return
