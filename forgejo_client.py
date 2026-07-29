@@ -1,8 +1,10 @@
 import base64
-import os
+import json
 import logging
+import os
+import urllib.request
+import urllib.error
 from typing import List, Dict, Any
-import aiohttp
 
 logger = logging.getLogger("deltachat_publish.forgejo")
 
@@ -25,16 +27,9 @@ class ForgejoClient:
     def is_configured(self) -> bool:
         return bool(self.token and self.base_url and self.repo_owner and self.repo_name)
 
-    async def commit_files(self, files: List[Dict[str, str]], message: str) -> Dict[str, Any]:
+    def commit_files(self, files: List[Dict[str, str]], message: str) -> Dict[str, Any]:
         """
-        Creates a single commit with multiple files using Forgejo/Gitea API.
-        
-        files element format:
-        {
-            "operation": "create", # "create", "update", "delete"
-            "path": "relative/path/in/repo.md",
-            "content": "base64_encoded_string"
-        }
+        Creates a single commit with multiple files using Forgejo/Gitea API synchronously.
         """
         if not self.is_configured():
             raise ValueError("Forgejo client is missing configuration (FORGEJO_TOKEN required).")
@@ -52,17 +47,23 @@ class ForgejoClient:
             "files": files,
         }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=headers) as resp:
-                if resp.status not in (200, 201):
-                    error_text = await resp.text()
-                    logger.error(f"Forgejo API error ({resp.status}): {error_text}")
-                    raise RuntimeError(f"Forgejo API returned HTTP {resp.status}: {error_text}")
-                
-                return await resp.json()
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
 
-    async def check_connection(self) -> bool:
-        """Verifies repository access via API."""
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                body = resp.read().decode("utf-8")
+                return json.loads(body)
+        except urllib.error.HTTPError as e:
+            error_text = e.read().decode("utf-8")
+            logger.error(f"Forgejo API error ({e.code}): {error_text}")
+            raise RuntimeError(f"Forgejo API returned HTTP {e.code}: {error_text}")
+        except Exception as e:
+            logger.error(f"Forgejo API request failed: {e}")
+            raise
+
+    def check_connection(self) -> bool:
+        """Verifies repository access via API synchronously."""
         if not self.is_configured():
             return False
         url = f"{self.base_url}/api/v1/repos/{self.repo_owner}/{self.repo_name}"
@@ -71,9 +72,9 @@ class ForgejoClient:
             "Accept": "application/json",
         }
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=5) as resp:
-                    return resp.status == 200
+            req = urllib.request.Request(url, headers=headers, method="GET")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.status == 200
         except Exception as e:
             logger.warning(f"Forgejo connectivity check failed: {e}")
             return False

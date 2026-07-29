@@ -52,13 +52,14 @@ def get_help_message() -> str:
 
 
 @dc_cli.on(events.NewMessage)
-async def on_new_message(bot, accid: int, msg: MsgData):
+def on_new_message(bot, accid: int, event):
+    msg = event.msg
     sender_addr = msg.from_id
     if not sender_addr:
         return
 
     # Don't process bot's own messages
-    bot_contact = await bot.rpc.get_contact(accid, sender_addr)
+    bot_contact = bot.rpc.get_contact(accid, sender_addr)
     if bot_contact.get("is_self"):
         return
 
@@ -76,13 +77,13 @@ async def on_new_message(bot, accid: int, msg: MsgData):
         cmd = parts[0].lower()
 
         if cmd == "/help" or cmd == "/start":
-            await bot.rpc.send_msg(accid, chat_id, MsgData(text=get_help_message()))
+            bot.rpc.send_msg(accid, chat_id, MsgData(text=get_help_message()))
             return
 
         elif cmd == "/initadmin":
             current_admin = database.get_admin_email()
             if current_admin and current_admin != sender_email.lower():
-                await bot.rpc.send_msg(
+                bot.rpc.send_msg(
                     accid, chat_id,
                     MsgData(text=f"❌ Ownership already claimed by {current_admin}.")
                 )
@@ -92,7 +93,7 @@ async def on_new_message(bot, accid: int, msg: MsgData):
             if fingerprint:
                 database.set_admin_fingerprint(fingerprint)
             
-            await bot.rpc.send_msg(
+            bot.rpc.send_msg(
                 accid, chat_id,
                 MsgData(text=f"✅ Ownership successfully claimed by {sender_email}!")
             )
@@ -104,12 +105,12 @@ async def on_new_message(bot, accid: int, msg: MsgData):
                 "Donate link: https://gluek.info/donate\n"
                 "Thank you for your support!"
             )
-            await bot.rpc.send_msg(accid, chat_id, MsgData(text=donate_text))
+            bot.rpc.send_msg(accid, chat_id, MsgData(text=donate_text))
             return
 
         elif cmd == "/status":
             configured = forgejo_client.is_configured()
-            conn_ok = await forgejo_client.check_connection() if configured else False
+            conn_ok = forgejo_client.check_connection() if configured else False
             status_text = (
                 f"⚙️ Bot Diagnostics:\n"
                 f"• Version: v{VERSION}\n"
@@ -120,17 +121,17 @@ async def on_new_message(bot, accid: int, msg: MsgData):
                 f"• API Token Configured: {'✅ Yes' if configured else '❌ No (FORGEJO_TOKEN missing)'}\n"
                 f"• Connection Test: {'✅ OK' if conn_ok else '❌ Failed / Unreachable'}\n"
             )
-            await bot.rpc.send_msg(accid, chat_id, MsgData(text=status_text))
+            bot.rpc.send_msg(accid, chat_id, MsgData(text=status_text))
             return
 
         elif cmd == "/list":
             if not database.is_authorized_sender(sender_email, fingerprint):
-                await bot.rpc.send_msg(accid, chat_id, MsgData(text="⛔ Access denied. Only administrator can view post list."))
+                bot.rpc.send_msg(accid, chat_id, MsgData(text="⛔ Access denied. Only administrator can view post list."))
                 return
 
             recent = database.get_recent_posts(limit=5)
             if not recent:
-                await bot.rpc.send_msg(accid, chat_id, MsgData(text="📭 No published posts logged yet."))
+                bot.rpc.send_msg(accid, chat_id, MsgData(text="📭 No published posts logged yet."))
                 return
 
             lines = ["📚 Recently Published Posts:\n"]
@@ -139,12 +140,12 @@ async def on_new_message(bot, accid: int, msg: MsgData):
                 sha_str = f" (`{p['commit_sha'][:7]}`)" if p['commit_sha'] else ""
                 lines.append(f"• **{p['title']}**\n  Slug: `{p['slug']}` | {t_str}{sha_str}")
 
-            await bot.rpc.send_msg(accid, chat_id, MsgData(text="\n".join(lines)))
+            bot.rpc.send_msg(accid, chat_id, MsgData(text="\n".join(lines)))
             return
 
         elif cmd in ("/transports", "/addtransport", "/rmtransport", "/setprimary", "/resilient"):
             # Standard transport management placeholder
-            await bot.rpc.send_msg(
+            bot.rpc.send_msg(
                 accid, chat_id,
                 MsgData(text=f"ℹ️ Transport administration for {cmd}: Default primary transport is active.")
             )
@@ -153,12 +154,12 @@ async def on_new_message(bot, accid: int, msg: MsgData):
         elif cmd == "/stats":
             stats = database.get_all_transport_stats()
             if not stats:
-                await bot.rpc.send_msg(accid, chat_id, MsgData(text="📊 No transport stats recorded yet."))
+                bot.rpc.send_msg(accid, chat_id, MsgData(text="📊 No transport stats recorded yet."))
                 return
             lines = ["📊 Transport Statistics:\n"]
             for s in stats:
                 lines.append(f"• `{s['addr']}`: Sent {s['msgs_sent']}, Received {s['msgs_received']}")
-            await bot.rpc.send_msg(accid, chat_id, MsgData(text="\n".join(lines)))
+            bot.rpc.send_msg(accid, chat_id, MsgData(text="\n".join(lines)))
             return
 
     # Check Authorization for publishing
@@ -168,7 +169,7 @@ async def on_new_message(bot, accid: int, msg: MsgData):
             "⛔ Access Denied: You are not authorized to publish to this blog.\n\n"
             "If you are the bot administrator, run `/initadmin` to claim ownership."
         )
-        await bot.rpc.send_msg(accid, chat_id, MsgData(text=reply))
+        bot.rpc.send_msg(accid, chat_id, MsgData(text=reply))
         return
 
     # Handle Post Creation
@@ -189,14 +190,14 @@ async def on_new_message(bot, accid: int, msg: MsgData):
                 logger.error(f"Error reading attached file: {e}")
 
         if not title and not attachments and not body:
-            await bot.rpc.send_msg(
+            bot.rpc.send_msg(
                 accid, chat_id,
                 MsgData(text="⚠️ Cannot publish empty message. Send a title, text, or image.")
             )
             return
 
         # Notify user processing started
-        processing_msg = await bot.rpc.send_msg(
+        processing_msg = bot.rpc.send_msg(
             accid, chat_id,
             MsgData(text=f"⏳ Packaging and committing post: **{title}**...")
         )
@@ -209,7 +210,7 @@ async def on_new_message(bot, accid: int, msg: MsgData):
         )
 
         commit_msg = f"Publish post: {title}"
-        result = await forgejo_client.commit_files(files_payload, commit_msg)
+        result = forgejo_client.commit_files(files_payload, commit_msg)
 
         commit_sha = ""
         commit_url = ""
@@ -230,12 +231,12 @@ async def on_new_message(bot, accid: int, msg: MsgData):
             f"• **Files**: {len(files_payload)} file(s) committed via Forgejo API{url_display}\n\n"
             f"Site build pipeline will automatically trigger."
         )
-        await bot.rpc.send_msg(accid, chat_id, MsgData(text=success_response))
+        bot.rpc.send_msg(accid, chat_id, MsgData(text=success_response))
 
     except Exception as e:
         logger.exception("Failed to publish post via Forgejo API")
         err_reply = f"❌ **Publishing Failed**: {str(e)}"
-        await bot.rpc.send_msg(accid, chat_id, MsgData(text=err_reply))
+        bot.rpc.send_msg(accid, chat_id, MsgData(text=err_reply))
 
 
 @dc_cli.on_init
@@ -245,6 +246,35 @@ def on_init(bot, _args):
         accid = bot.rpc.add_account()
     else:
         accid = accounts[0]
+
+    # Configure bot profile metadata from environment variables
+    bot_name = os.environ.get("DISPLAY_NAME", "Delta Chat Publish Bot")
+    bot.rpc.set_config(accid, "displayname", bot_name)
+
+    status_text = os.environ.get("STATUS_TEXT", "Publishes blog posts directly to Git/Astro via Delta Chat")
+    bot.rpc.set_config(accid, "selfstatus", status_text)
+
+    avatar_env = os.environ.get("AVATAR_PATH")
+    avatar_paths = []
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    if avatar_env:
+        if os.path.isabs(avatar_env):
+            avatar_paths.append(avatar_env)
+        else:
+            avatar_paths.append(os.path.join(base_dir, avatar_env))
+            avatar_paths.append(os.path.abspath(avatar_env))
+
+    avatar_paths.extend([
+        os.path.join(base_dir, "avatar.png"),
+        os.path.join(base_dir, "avatar.jpg"),
+        os.path.join(base_dir, "icon.png"),
+        os.path.join(base_dir, "icon.jpg")
+    ])
+
+    for path in avatar_paths:
+        if os.path.exists(path):
+            bot.rpc.set_config(accid, "selfavatar", path)
+            break
 
     if not bot.rpc.is_configured(accid):
         bot.rpc.set_config(accid, "bot", "1")
