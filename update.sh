@@ -2,7 +2,8 @@
 set -e
 cd "$(dirname "$0")"
 
-# --- HEALTHCHECKS SUPPORT ---
+# --- HEALTHCHECKS & ENV SUPPORT ---
+[ -f .env ] && . .env
 [ -f .env.local ] && . .env.local
 
 hc_ping() {
