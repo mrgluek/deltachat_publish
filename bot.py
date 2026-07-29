@@ -51,7 +51,7 @@ def get_help_message() -> str:
     )
 
 
-@events.on(events.NewMessage)
+@dc_cli.on(events.NewMessage)
 async def on_new_message(bot, accid: int, msg: MsgData):
     sender_addr = msg.from_id
     if not sender_addr:
@@ -236,6 +236,11 @@ async def on_new_message(bot, accid: int, msg: MsgData):
         logger.exception("Failed to publish post via Forgejo API")
         err_reply = f"❌ **Publishing Failed**: {str(e)}"
         await bot.rpc.send_msg(accid, chat_id, MsgData(text=err_reply))
+
+
+@dc_cli.on_start
+def on_start(bot, _args):
+    bot.logger.info(f"🚀 Delta Chat Publish Bot v{VERSION} is running. Waiting for events...")
 
 
 def main():
