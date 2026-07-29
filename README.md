@@ -18,6 +18,14 @@ Following **IndieWeb / POSSE** principles, your Git repository remains the singl
 
 ---
 
+## 🔒 Security & Encryption Architecture
+
+- **End-to-End Encryption (E2EE)**: All communication between the Delta Chat client and the bot is fully encrypted using OpenPGP / Autocrypt over Chatmail.
+- **Cryptographic Fingerprint & Email Verification**: The bot strictly verifies the sender's email AND cryptographic OpenPGP fingerprint against `database.is_authorized_sender(...)` initialized via `/initadmin` or `set_admin.py`. Unauthorized publish attempts are immediately rejected (`⛔ Access Denied`).
+- **Protected API Credentials**: Forgejo API personal access tokens (`FORGEJO_TOKEN`) are strictly isolated inside server environment variables (`.env`) and never exposed over chat or client logs.
+
+---
+
 ## 🚀 How to Publish a Post
 
 Simply send a chat message to your bot:
