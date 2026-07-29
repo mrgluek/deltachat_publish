@@ -14,5 +14,6 @@ COPY . .
 
 VOLUME /app/data
 ENV DB_PATH=/app/data/publish.db
+ENV PYTHONUNBUFFERED=1
 
 CMD ["python", "bot.py", "serve"]
