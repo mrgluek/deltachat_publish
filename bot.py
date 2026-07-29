@@ -238,6 +238,38 @@ async def on_new_message(bot, accid: int, msg: MsgData):
         await bot.rpc.send_msg(accid, chat_id, MsgData(text=err_reply))
 
 
+@dc_cli.on_init
+def on_init(bot, _args):
+    accounts = bot.rpc.get_all_account_ids()
+    if not accounts:
+        accid = bot.rpc.add_account()
+    else:
+        accid = accounts[0]
+
+    if not bot.rpc.is_configured(accid):
+        bot.rpc.set_config(accid, "bot", "1")
+        relay = os.getenv("RELAY", "chatmail.uk").strip()
+        addr = os.getenv("ADDR")
+        mail_pw = os.getenv("MAIL_PW")
+
+        if addr and mail_pw:
+            bot.logger.info(f"Configuring account for {addr}...")
+            params = {"addr": addr, "password": mail_pw}
+            mail_server = os.getenv("MAIL_SERVER")
+            mail_port = os.getenv("MAIL_PORT")
+            if mail_server:
+                params["mail_server"] = mail_server
+            if mail_port:
+                params["mail_port"] = mail_port
+            bot.rpc.add_or_update_transport(accid, params)
+        elif relay:
+            bot.logger.info(f"Auto-creating new chatmail account on relay '{relay}'...")
+            qr_uri = relay if (relay.startswith("DCACCOUNT:") or relay.startswith("http")) else f"DCACCOUNT:{relay}"
+            bot.rpc.add_transport_from_qr(accid, qr_uri)
+        else:
+            bot.logger.error("No account credentials (ADDR/MAIL_PW) or RELAY set!")
+
+
 @dc_cli.on_start
 def on_start(bot, _args):
     bot.logger.info(f"🚀 Delta Chat Publish Bot v{VERSION} is running. Waiting for events...")
