@@ -222,13 +222,17 @@ def on_new_message(bot, accid: int, event):
         database.log_published_post(slug=slug, title=title, commit_sha=commit_sha)
 
         sha_display = f" (`{commit_sha[:7]}`)" if commit_sha else ""
-        url_display = f"\n🔗 Commit: {commit_url}" if commit_url else ""
+        commit_display = f"\n🔗 Commit: {commit_url}" if commit_url else ""
+
+        blog_public_prefix = os.getenv("BLOG_PUBLIC_URL_PREFIX", "https://gluek.info/blog").rstrip("/")
+        post_url_display = f"\n🌐 Post: {blog_public_prefix}/{slug}/" if blog_public_prefix else ""
 
         success_response = (
             f"🚀 **Post Successfully Published!**\n\n"
             f"• **Title**: {title}\n"
             f"• **Slug**: `{slug}`{sha_display}\n"
-            f"• **Files**: {len(files_payload)} file(s) committed via Forgejo API{url_display}\n\n"
+            f"• **Files**: {len(files_payload)} file(s) committed via Forgejo API"
+            f"{post_url_display}{commit_display}\n\n"
             f"Site build pipeline will automatically trigger."
         )
         bot.rpc.send_msg(accid, chat_id, MsgData(text=success_response))
