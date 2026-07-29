@@ -247,8 +247,8 @@ def main():
     database.init_db()
     logger.info(f"Starting Delta Chat Publish Bot v{VERSION}...")
     
-    # Parse CLI arguments and run bot
-    dc_cli.run()
+    # Parse CLI arguments and start bot
+    dc_cli.start()
 
 
 if __name__ == "__main__":
