@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import logging
+import json
 import os
 import sys
 import tempfile
@@ -15,7 +16,7 @@ import database
 from forgejo_client import ForgejoClient
 from post_builder import parse_message_text, build_post_files_payload
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("deltachat_publish")
@@ -451,10 +452,28 @@ def on_init(bot, _args):
         accid = accounts[0]
 
     # Configure bot profile metadata from environment variables
-    bot_name = os.environ.get("DISPLAY_NAME", "Delta Chat Publish Bot")
+    bot_name = os.environ.get("DISPLAY_NAME")
+    if not bot_name and os.path.exists("/data/options.json"):
+        try:
+            with open("/data/options.json", "r", encoding="utf-8") as f:
+                opts = json.load(f)
+                bot_name = opts.get("display_name", "").strip()
+        except Exception:
+            pass
+    if not bot_name:
+        bot_name = "Delta Chat Publish Bot"
     bot.rpc.set_config(accid, "displayname", bot_name)
 
-    status_text = os.environ.get("STATUS_TEXT", "Publishes blog posts directly to Git/Astro via Delta Chat")
+    status_text = os.environ.get("STATUS_TEXT")
+    if not status_text and os.path.exists("/data/options.json"):
+        try:
+            with open("/data/options.json", "r", encoding="utf-8") as f:
+                opts = json.load(f)
+                status_text = opts.get("status_text", "").strip()
+        except Exception:
+            pass
+    if not status_text:
+        status_text = "Publishes blog posts directly to Git/Astro via Delta Chat"
     bot.rpc.set_config(accid, "selfstatus", status_text)
 
     avatar_env = os.environ.get("AVATAR_PATH")
