@@ -11,65 +11,75 @@ _lock = threading.Lock()
 
 
 def get_connection():
-    return sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=5.0)
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
+    conn.execute("PRAGMA busy_timeout = 5000;")
+    return conn
 
 
 def init_db():
     with _lock:
         conn = get_connection()
-        cursor = conn.cursor()
+        try:
+            cursor = conn.cursor()
 
-        # Key-value config table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS config (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-        ''')
+            # Key-value config table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS config (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            ''')
 
-        # Published posts history
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS published_posts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                slug TEXT NOT NULL,
-                commit_sha TEXT,
-                title TEXT,
-                created_at INTEGER NOT NULL
-            )
-        ''')
+            # Published posts history
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS published_posts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    slug TEXT NOT NULL,
+                    commit_sha TEXT,
+                    title TEXT,
+                    created_at INTEGER NOT NULL
+                )
+            ''')
 
-        # Transport statistics table (Standard requirement)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS transport_stats (
-                addr TEXT PRIMARY KEY,
-                msgs_sent INTEGER DEFAULT 0,
-                msgs_received INTEGER DEFAULT 0,
-                last_sent_at INTEGER,
-                last_received_at INTEGER
-            )
-        ''')
+            # Transport statistics table (Standard requirement)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS transport_stats (
+                    addr TEXT PRIMARY KEY,
+                    msgs_sent INTEGER DEFAULT 0,
+                    msgs_received INTEGER DEFAULT 0,
+                    last_sent_at INTEGER,
+                    last_received_at INTEGER
+                )
+            ''')
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+        finally:
+            conn.close()
 
 
 def set_config(key: str, value: str):
     with _lock:
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (key, value))
-        conn.commit()
-        conn.close()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (key, value))
+            conn.commit()
+        finally:
+            conn.close()
 
 
 def get_config(key: str) -> Optional[str]:
     with _lock:
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT value FROM config WHERE key = ?", (key,))
-        row = cursor.fetchone()
-        conn.close()
-        return row[0] if row else None
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM config WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            return row[0] if row else None
+        finally:
+            conn.close()
 
 
 def get_admin_email() -> Optional[str]:
@@ -128,84 +138,147 @@ def is_authorized_sender(sender_addr: str, fingerprint: Optional[str] = None) ->
 def log_published_post(slug: str, title: str, commit_sha: str = ""):
     with _lock:
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO published_posts (slug, title, commit_sha, created_at) VALUES (?, ?, ?, ?)",
-            (slug, title, commit_sha, int(time.time()))
-        )
-        conn.commit()
-        conn.close()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO published_posts (slug, title, commit_sha, created_at) VALUES (?, ?, ?, ?)",
+                (slug, title, commit_sha, int(time.time()))
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
 
 def get_recent_posts(limit: int = 5) -> List[Dict[str, Any]]:
     with _lock:
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT slug, title, commit_sha, created_at FROM published_posts ORDER BY id DESC LIMIT ?",
-            (limit,)
-        )
-        rows = cursor.fetchall()
-        conn.close()
-        return [
-            {"slug": r[0], "title": r[1], "commit_sha": r[2], "created_at": r[3]}
-            for r in rows
-        ]
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT slug, title, commit_sha, created_at FROM published_posts ORDER BY id DESC LIMIT ?",
+                (limit,)
+            )
+            rows = cursor.fetchall()
+            return [
+                {"slug": r[0], "title": r[1], "commit_sha": r[2], "created_at": r[3]}
+                for r in rows
+            ]
+        finally:
+            conn.close()
 
 
 def get_posts_count() -> int:
     with _lock:
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM published_posts")
-        row = cursor.fetchone()
-        conn.close()
-        return row[0] if row else 0
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM published_posts")
+            row = cursor.fetchone()
+            return row[0] if row else 0
+        finally:
+            conn.close()
+
+
+# Transport statistics tracking (buffered in memory)
+_transport_stats_buffer: Dict[str, Dict[str, Any]] = {}
+_transport_stats_lock = threading.Lock()
+_last_transport_flush = time.time()
+TRANSPORT_FLUSH_INTERVAL = 30.0  # seconds
 
 
 def update_transport_stats(addr: str, sent: bool = False, received: bool = False):
+    """Increment the sent/received counter for a transport address (buffered in memory)."""
+    if not addr or not isinstance(addr, str) or "@" not in addr:
+        return
+    now = int(time.time())
+    should_flush = False
+    with _transport_stats_lock:
+        if addr not in _transport_stats_buffer:
+            _transport_stats_buffer[addr] = {"sent": 0, "recv": 0, "last_sent": 0, "last_recv": 0}
+        if sent:
+            _transport_stats_buffer[addr]["sent"] += 1
+            _transport_stats_buffer[addr]["last_sent"] = now
+        if received:
+            _transport_stats_buffer[addr]["recv"] += 1
+            _transport_stats_buffer[addr]["last_recv"] = now
+        global _last_transport_flush
+        if now - _last_transport_flush >= TRANSPORT_FLUSH_INTERVAL:
+            should_flush = True
+    if should_flush:
+        flush_transport_stats()
+
+
+def flush_transport_stats():
+    """Flush buffered transport stats to the database in a single transaction."""
+    global _last_transport_flush
+    with _transport_stats_lock:
+        if not _transport_stats_buffer:
+            _last_transport_flush = time.time()
+            return
+        pending = dict(_transport_stats_buffer)
+        _transport_stats_buffer.clear()
+        _last_transport_flush = time.time()
+
     with _lock:
         conn = get_connection()
-        cursor = conn.cursor()
-        now = int(time.time())
-        cursor.execute("SELECT msgs_sent, msgs_received FROM transport_stats WHERE addr = ?", (addr,))
-        row = cursor.fetchone()
-        if row:
-            s_cnt = row[0] + (1 if sent else 0)
-            r_cnt = row[1] + (1 if received else 0)
-            if sent:
-                cursor.execute(
-                    "UPDATE transport_stats SET msgs_sent = ?, last_sent_at = ? WHERE addr = ?",
-                    (s_cnt, now, addr)
-                )
-            if received:
-                cursor.execute(
-                    "UPDATE transport_stats SET msgs_received = ?, last_received_at = ? WHERE addr = ?",
-                    (r_cnt, now, addr)
-                )
-        else:
-            cursor.execute(
-                "INSERT INTO transport_stats (addr, msgs_sent, msgs_received, last_sent_at, last_received_at) VALUES (?, ?, ?, ?, ?)",
-                (addr, 1 if sent else 0, 1 if received else 0, now if sent else None, now if received else None)
-            )
-        conn.commit()
-        conn.close()
+        try:
+            cursor = conn.cursor()
+            for addr, counts in pending.items():
+                if not isinstance(addr, str) or "@" not in addr:
+                    continue
+                sent_cnt = int(counts.get("sent", 0))
+                recv_cnt = int(counts.get("recv", 0))
+                last_s = counts.get("last_sent") or None
+                last_r = counts.get("last_recv") or None
+                cursor.execute('''
+                    INSERT INTO transport_stats (addr, msgs_sent, msgs_received, last_sent_at, last_received_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(addr) DO UPDATE SET
+                        msgs_sent = msgs_sent + excluded.msgs_sent,
+                        msgs_received = msgs_received + excluded.msgs_received,
+                        last_sent_at = COALESCE(excluded.last_sent_at, transport_stats.last_sent_at),
+                        last_received_at = COALESCE(excluded.last_received_at, transport_stats.last_received_at)
+                ''', (addr, sent_cnt, recv_cnt, last_s, last_r))
+            conn.commit()
+        finally:
+            conn.close()
 
 
 def get_all_transport_stats() -> List[Dict[str, Any]]:
+    """Get statistics for all tracked transports."""
+    flush_transport_stats()
     with _lock:
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT addr, msgs_sent, msgs_received, last_sent_at, last_received_at FROM transport_stats")
-        rows = cursor.fetchall()
-        conn.close()
-        return [
-            {
-                "addr": r[0],
-                "msgs_sent": r[1],
-                "msgs_received": r[2],
-                "last_sent_at": r[3],
-                "last_received_at": r[4]
-            }
-            for r in rows
-        ]
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT addr, msgs_sent, msgs_received, last_sent_at, last_received_at FROM transport_stats ORDER BY msgs_sent + msgs_received DESC")
+            rows = cursor.fetchall()
+            return [
+                {
+                    "addr": r[0],
+                    "msgs_sent": r[1],
+                    "msgs_received": r[2],
+                    "last_sent_at": r[3],
+                    "last_received_at": r[4]
+                }
+                for r in rows
+            ]
+        finally:
+            conn.close()
+
+
+def cleanup_old_records(retention_days: int = 30) -> Dict[str, int]:
+    """Clean up old published post logs and flush transport stats."""
+    flush_transport_stats()
+    now = int(time.time())
+    cutoff = now - (retention_days * 86400)
+    with _lock:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM published_posts WHERE created_at < ?", (cutoff,))
+            pruned = cursor.rowcount
+            conn.commit()
+            return {"posts": pruned}
+        finally:
+            conn.close()

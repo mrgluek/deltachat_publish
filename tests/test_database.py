@@ -45,6 +45,8 @@ import database
 class TestDatabase(unittest.TestCase):
     def setUp(self):
         database.DB_PATH = TEST_DB
+        with database._transport_stats_lock:
+            database._transport_stats_buffer.clear()
         database.init_db()
 
     def tearDown(self):
@@ -190,6 +192,15 @@ class TestDatabase(unittest.TestCase):
         self.assertTrue(database.get_config("resilient") == "1")
         database.set_config("resilient", "0")
         self.assertFalse(database.get_config("resilient") == "1")
+
+    def test_cleanup_old_records(self):
+        database.log_published_post(slug="old-post", title="Old Post")
+        self.assertEqual(database.get_posts_count(), 1)
+        import time
+        time.sleep(1.1)
+        res = database.cleanup_old_records(retention_days=0)
+        self.assertGreaterEqual(res["posts"], 1)
+        self.assertEqual(database.get_posts_count(), 0)
 
 
 if __name__ == "__main__":

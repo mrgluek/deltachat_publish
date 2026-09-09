@@ -2,6 +2,20 @@
 
 All notable changes to the `deltachat_publish` project will be documented in this file.
 
+## [1.0.3] - 2026-09-09
+
+### Added
+- **Private Chat Enforcement**: Enforce private 1:1 chat for `/addtransport` and `/initadmin` to prevent credential exposure in group chats.
+- **Resilient Transport Sending**: Integrated `_setup_resilient_mode` with concurrency lock and automatic fallback transport resending.
+- **Automated Retention & Pruning**: Periodic background cleanup task in `on_start` for database records and transport statistics.
+- **Transport Command Unit Tests**: Added `tests/test_transport_commands.py` covering private chat constraints, resilient mode toggle, and error sanitization.
+
+### Fixed
+- **Transport Command Error Sanitization**: Sanitized error output in `/transports`, `/addtransport`, `/rmtransport`, `/setprimary`, and `/resilient`.
+
+### Changed
+- **SQLite Performance Optimization**: Enabled WAL mode (`journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000`) and in-memory buffered transport statistics.
+
 ## [1.0.2] - 2026-09-07
 
 ### Added
