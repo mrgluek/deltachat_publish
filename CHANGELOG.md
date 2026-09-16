@@ -2,6 +2,13 @@
 
 All notable changes to the `deltachat_publish` project will be documented in this file.
 
+## [1.0.4] - 2026-09-16
+
+### Security
+- **SSRF Protection in Forgejo Client**: Added URL validation (`is_safe_url`) in `ForgejoClient.commit_files` and `ForgejoClient.check_connection` with DNS resolution to block loopback, private, link-local, multicast, and cloud metadata IP ranges (`169.254.169.254`, `127.0.0.0/8`, etc.), plus `.local`, `.internal`, and `.lan` domains.
+- **Bounded Response Reads**: Enforced read byte limits on Forgejo API responses (10 MB for commits, 64 KB for errors and connectivity checks) to prevent memory exhaustion.
+- **Dependency Pinning**: Pinned dependencies to secure version bounds in `requirements.txt` (`deltabot-cli>=8.1.2,<9.0.0`, `aiohttp>=3.10.11,<4.0.0`, `qrcode>=7.4.2,<8.0.0`).
+
 ## [1.0.3] - 2026-09-09
 
 ### Added
