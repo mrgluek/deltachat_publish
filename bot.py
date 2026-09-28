@@ -17,14 +17,19 @@ import database
 from forgejo_client import ForgejoClient
 from post_builder import parse_message_text, build_post_files_payload
 
-VERSION = "1.0.5"
+VERSION = "1.1.0"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("deltachat_publish")
 
 dc_cli = BotCli("publishbot")
 forgejo_client = ForgejoClient()
-resilient_lock = threading.Lock()
+
+RELAY_SELECTION_NOTE = (
+    "Since core 2.61 the core picks the sending relay itself: it tries the newest relay first "
+    "and falls back to the next one if a relay is unreachable. "
+    "Use /addtransport and /rmtransport to control relays."
+)
 
 
 def _parse_chat_info_is_private(chat_info) -> bool:
@@ -70,96 +75,6 @@ def _is_private_chat(bot, accid: int, chat_id: int) -> bool:
     return False
 
 
-def _setup_resilient_mode(bot):
-    original_send_msg = bot.rpc.send_msg
-
-    def patched_send_msg(account_id, chat_id, msg_data):
-        try:
-            is_resilient = database.get_config("resilient") == "1"
-        except Exception:
-            is_resilient = False
-
-        if not is_resilient:
-            return original_send_msg(account_id, chat_id, msg_data)
-
-        try:
-            transports = bot.rpc.list_transports(account_id)
-        except Exception:
-            transports = []
-
-        if len(transports) <= 1:
-            return original_send_msg(account_id, chat_id, msg_data)
-
-        with resilient_lock:
-            initial_addr = None
-            try:
-                initial_addr = bot.rpc.get_config(account_id, "configured_addr") or bot.rpc.get_config(account_id, "addr")
-            except Exception:
-                pass
-
-            try:
-                msg_id = original_send_msg(account_id, chat_id, msg_data)
-                bot.logger.info(f"Resilient send: initial msg queued with ID {msg_id} on transport {initial_addr}.")
-            except Exception as send_err:
-                bot.logger.error(f"Resilient send: failed to queue initial message: {send_err}")
-                return None
-
-            def bg_resend_worker(m_id, init_addr, t_list):
-                with resilient_lock:
-                    try:
-                        start_time = time.time()
-                        delivered = False
-                        while time.time() - start_time < 10:
-                            try:
-                                msg_snapshot = bot.rpc.get_message(account_id, m_id)
-                                state = msg_snapshot.get('state') if isinstance(msg_snapshot, dict) else getattr(msg_snapshot, 'state', None)
-                                if state in (26, 28):
-                                    delivered = True
-                                    break
-                                if state == 24:
-                                    break
-                            except Exception:
-                                pass
-                            time.sleep(0.5)
-
-                        for t in t_list:
-                            t_addr = t.get('addr') if isinstance(t, dict) else getattr(t, 'addr', None)
-                            if not t_addr or (init_addr and t_addr.lower() == init_addr.lower()):
-                                continue
-
-                            try:
-                                bot.rpc.set_config(account_id, "configured_addr", t_addr)
-                                time.sleep(1)
-                            except Exception:
-                                continue
-
-                            try:
-                                bot.rpc.resend_messages(account_id, [m_id])
-                                start_time = time.time()
-                                while time.time() - start_time < 10:
-                                    try:
-                                        msg_snapshot = bot.rpc.get_message(account_id, m_id)
-                                        state = msg_snapshot.get('state') if isinstance(msg_snapshot, dict) else getattr(msg_snapshot, 'state', None)
-                                        if state in (26, 28, 24):
-                                            break
-                                    except Exception:
-                                        pass
-                                    time.sleep(0.5)
-                            except Exception as resend_err:
-                                bot.logger.error(f"Resilient send bg error on {t_addr}: {resend_err}")
-                    finally:
-                        if init_addr:
-                            try:
-                                bot.rpc.set_config(account_id, "configured_addr", init_addr)
-                            except Exception:
-                                pass
-
-            threading.Thread(target=bg_resend_worker, args=(msg_id, initial_addr, transports), daemon=True).start()
-            return msg_id
-
-    bot.rpc.send_msg = patched_send_msg
-
-
 def get_help_message() -> str:
     admin_email = database.get_admin_email()
     owner_str = f"Owner: {admin_email}" if admin_email else "Owner: Not claimed (use /initadmin in private chat)"
@@ -181,8 +96,6 @@ def get_help_message() -> str:
         f"• /transports - Show configured mail relays\n"
         f"• /addtransport <addr> <pass> [host] [port] - Add mail transport\n"
         f"• /rmtransport <addr> - Remove mail transport\n"
-        f"• /setprimary <addr> - Set primary mail transport\n"
-        f"• /resilient <on|off> - Toggle transport failover\n"
         f"• /donate - Support bot development\n"
     )
 
@@ -358,18 +271,16 @@ def on_new_message(bot, accid: int, event):
             except Exception:
                 pass
 
-            resilient_on = database.get_config("resilient") == "1"
-
             stats_map = {s['addr']: s for s in database.get_all_transport_stats()}
-            active_addr = bot.rpc.get_config(accid, "configured_addr") or bot.rpc.get_config(accid, "addr")
+            # The core tries the newest relay first when sending, so list newest first.
             transport_addrs = [
                 (t.get('addr', '') if isinstance(t, dict) else getattr(t, 'addr', ''))
-                for t in transports
+                for t in reversed(transports)
             ]
 
             import re as _re
-            reply = f"🔌 **Mail Relays (Transports)**\n\nStatus: {connectivity_label}\n\n"
-            for addr in transport_addrs:
+            reply = f"🔌 **Mail Relays (Transports)**\n\nStatus: {connectivity_label}\nSending order: top to bottom (core falls back to the next relay if one is unreachable)\n\n"
+            for idx, addr in enumerate(transport_addrs, 1):
                 status_label = "❓ Unknown"
                 if connectivity_html:
                     domain = addr.split('@')[-1] if '@' in addr else addr
@@ -385,9 +296,7 @@ def on_new_message(bot, accid: int, event):
                         elif "red" in color or "lost" in status_text_m or "error" in status_text_m:
                             status_label = "🔴 Not connected"
 
-                is_used = resilient_on or (addr == active_addr)
-                used_str = " ✔︎ Used for sending:" if is_used else ":"
-                reply += f"**{status_label}**{used_str} `{addr}`\n"
+                reply += f"{idx}. **{status_label}:** `{addr}`\n"
 
                 s = stats_map.get(addr)
                 if s:
@@ -472,46 +381,11 @@ def on_new_message(bot, accid: int, event):
                 bot.rpc.send_msg(accid, chat_id, MsgData(text="❌ Failed to remove transport. Check server logs."))
             return
 
-        elif cmd == "/setprimary":
+        elif cmd in ("/setprimary", "/resilient"):
             if not database.is_authorized_sender(sender_email, fingerprint):
-                bot.rpc.send_msg(accid, chat_id, MsgData(text="❌ Only the bot administrator can use /setprimary."))
+                bot.rpc.send_msg(accid, chat_id, MsgData(text=f"❌ Only the bot administrator can use {cmd}."))
                 return
-
-            t_addr = text[len("/setprimary"):].strip()
-            if not t_addr:
-                bot.rpc.send_msg(accid, chat_id, MsgData(text="Usage: /setprimary user@example.com"))
-                return
-
-            try:
-                bot.rpc.set_config(accid, "configured_addr", t_addr)
-                bot.rpc.send_msg(accid, chat_id, MsgData(text=f"✅ Primary address is now `{t_addr}`."))
-            except Exception as e:
-                bot.logger.error(f"Failed to set primary transport: {e}")
-                bot.rpc.send_msg(accid, chat_id, MsgData(text="❌ Failed to set primary address. Check server logs."))
-            return
-
-        elif cmd == "/resilient":
-            if not database.is_authorized_sender(sender_email, fingerprint):
-                bot.rpc.send_msg(accid, chat_id, MsgData(text="❌ Only the bot administrator can use /resilient."))
-                return
-
-            arg = text[len("/resilient"):].strip().lower()
-            try:
-                current = database.get_config("resilient") == "1"
-                if not arg:
-                    status = "enabled" if current else "disabled"
-                    bot.rpc.send_msg(accid, chat_id, MsgData(text=f"ℹ️ Resilient sending mode is currently {status}."))
-                elif arg in ("on", "1", "true"):
-                    database.set_config("resilient", "1")
-                    bot.rpc.send_msg(accid, chat_id, MsgData(text="✅ Resilient sending mode enabled."))
-                elif arg in ("off", "0", "false"):
-                    database.set_config("resilient", "0")
-                    bot.rpc.send_msg(accid, chat_id, MsgData(text="❌ Resilient sending mode disabled."))
-                else:
-                    bot.rpc.send_msg(accid, chat_id, MsgData(text="❌ Invalid argument. Use '/resilient on', '/resilient off', or '/resilient' to get status."))
-            except Exception as e:
-                bot.logger.error(f"Failed to update resilient mode: {e}")
-                bot.rpc.send_msg(accid, chat_id, MsgData(text="❌ Failed to update resilient mode. Check server logs."))
+            bot.rpc.send_msg(accid, chat_id, MsgData(text=f"⚠️ {cmd} is deprecated and disabled. {RELAY_SELECTION_NOTE}"))
             return
 
     # Check Authorization for publishing
@@ -597,7 +471,6 @@ def on_new_message(bot, accid: int, event):
 
 @dc_cli.on_init
 def on_init(bot, _args):
-    _setup_resilient_mode(bot)
     accounts = bot.rpc.get_all_account_ids()
     if not accounts:
         accid = bot.rpc.add_account()

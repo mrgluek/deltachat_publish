@@ -15,6 +15,7 @@ Following **IndieWeb / POSSE** principles, your Git repository remains the singl
   - `folder` layout (`Astro Nano`): Post in `src/content/blog/<slug>/index.md`, images alongside in `src/content/blog/<slug>/`.
 - **Automatic Slugification**: Transliterates Russian titles to clean URL slugs (e.g. `Мой новый пост` → `moy-novyy-post`).
 - **Standard Delta Chat Bot Architecture**: Fully supports `/help`, `/initadmin`, `/donate`, `/status`, `/list`, `/stats`, `/transports`, SQLite state storage, and thread locking.
+- **Multiple Mail Relays**: Relay selection and failover are handled by the Delta Chat core (2.61+): it sends via the newest relay first and falls back to the next one if a relay is unreachable. The former `/setprimary` and `/resilient` commands are deprecated and only reply with this explanation.
 
 ---
 

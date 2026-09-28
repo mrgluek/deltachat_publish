@@ -1,7 +1,7 @@
 """
 Tests for transport and admin commands in deltachat_publish.
 Verifies private chat enforcement on /addtransport and /initadmin,
-resilient mode commands, and error sanitization.
+deprecated relay commands, and error sanitization.
 """
 import os
 import sys
@@ -179,20 +179,21 @@ class TestTransportCommands(unittest.TestCase):
         self.assertIn("Failed to add transport. Check server logs", msg_text)
         self.assertNotIn("secret server database", msg_text)
 
-    # ── /resilient tests ───────────────────────────────────────────────────
+    # ── deprecated /resilient and /setprimary ───────────────────────────────
 
-    def test_resilient_command_toggle(self):
+    def test_deprecated_relay_commands(self):
         database.set_config("admin_dc_email", "admin@gluek.info")
         database.set_admin_fingerprint("AABBCCDDAABBCCDDAABBCCDDAABBCCDD")
 
-        self.mock_msg.text = "/resilient on"
-        bot.on_new_message(self.mock_bot, self.accid, self.mock_event)
-        self.assertEqual(database.get_config("resilient"), "1")
-
-        self.mock_msg.text = "/resilient off"
-        bot.on_new_message(self.mock_bot, self.accid, self.mock_event)
-        self.assertEqual(database.get_config("resilient"), "0")
-
+        for cmd in ("/resilient on", "/setprimary relay@example.org"):
+            self.mock_bot.rpc.send_msg.reset_mock()
+            self.mock_msg.text = cmd
+            bot.on_new_message(self.mock_bot, self.accid, self.mock_event)
+            msg_text = self.mock_bot.rpc.send_msg.call_args[0][2].text
+            self.assertIn(f"{cmd.split()[0]} is deprecated and disabled", msg_text)
+            self.assertIn("/rmtransport", msg_text)
+        self.assertIsNone(database.get_config("resilient"))
+        self.mock_bot.rpc.set_config.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

@@ -180,19 +180,6 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(stats_map["addr1@example.com"]["msgs_sent"], 1)
         self.assertEqual(stats_map["addr2@example.com"]["msgs_received"], 1)
 
-    # --- Resilient flag ---
-
-    def test_resilient_flag_default_off(self):
-        self.assertNotEqual(database.get_config("resilient"), "1")
-
-    def test_resilient_flag_toggle(self):
-        database.set_config("resilient", "0")
-        self.assertFalse(database.get_config("resilient") == "1")
-        database.set_config("resilient", "1")
-        self.assertTrue(database.get_config("resilient") == "1")
-        database.set_config("resilient", "0")
-        self.assertFalse(database.get_config("resilient") == "1")
-
     def test_cleanup_old_records(self):
         database.log_published_post(slug="old-post", title="Old Post")
         self.assertEqual(database.get_posts_count(), 1)
