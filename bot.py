@@ -14,10 +14,11 @@ from deltachat2 import events, MsgData
 from deltabot_cli import BotCli
 
 import database
+import transports_view
 from forgejo_client import ForgejoClient
 from post_builder import parse_message_text, build_post_files_payload
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("deltachat_publish")
@@ -117,9 +118,6 @@ def on_new_message(bot, accid: int, event):
     chat_id = msg.chat_id
     text = (msg.text or "").strip()
 
-    # Track message stats
-    database.update_transport_stats(sender_email, received=True)
-
     # Command handling
     if text.startswith("/"):
         parts = text.split()
@@ -202,9 +200,6 @@ def on_new_message(bot, accid: int, event):
 
         elif cmd == "/stats":
             posts_count = database.get_posts_count()
-            stats = database.get_all_transport_stats()
-            stats_map = {s['addr']: s for s in stats}
-
             # Get connectivity
             connectivity_label = "❓ Unknown"
             try:
@@ -223,14 +218,9 @@ def on_new_message(bot, accid: int, event):
             reply = (
                 f"📊 **Delta Chat Publish Bot Statistics**\n\n"
                 f"• Posts published: {posts_count}\n"
-                f"• Network: {connectivity_label}\n\n"
-                f"**Transport Statistics:**\n"
+                f"• Network: {connectivity_label}\n"
+                f"• Mail relays: see /transports\n"
             )
-            if stats:
-                for s in stats:
-                    reply += f"• `{s['addr']}`: 📤 Sent {s['msgs_sent']}  📥 Received {s['msgs_received']}\n"
-            else:
-                reply += "No transport stats recorded yet.\n"
 
             bot.rpc.send_msg(accid, chat_id, MsgData(text=reply))
             return
@@ -251,69 +241,9 @@ def on_new_message(bot, accid: int, event):
                 bot.rpc.send_msg(accid, chat_id, MsgData(text="No transports configured."))
                 return
 
-            connectivity_label = "❓ Unknown"
-            try:
-                connectivity = bot.rpc.get_connectivity(accid)
-                if connectivity >= 4000:
-                    connectivity_label = "🟢 Connected"
-                elif connectivity >= 3000:
-                    connectivity_label = "🔄 Working"
-                elif connectivity >= 2000:
-                    connectivity_label = "🟡 Connecting"
-                else:
-                    connectivity_label = "🔴 Not connected"
-            except Exception:
-                pass
-
-            connectivity_html = ""
-            try:
-                connectivity_html = bot.rpc.get_connectivity_html(accid)
-            except Exception:
-                pass
-
-            stats_map = {s['addr']: s for s in database.get_all_transport_stats()}
-            # The core tries the newest relay first when sending, so list newest first.
-            transport_addrs = [
-                (t.get('addr', '') if isinstance(t, dict) else getattr(t, 'addr', ''))
-                for t in reversed(transports)
-            ]
-
-            import re as _re
-            reply = f"🔌 **Mail Relays (Transports)**\n\nStatus: {connectivity_label}\nSending order: top to bottom (core falls back to the next relay if one is unreachable)\n\n"
-            for idx, addr in enumerate(transport_addrs, 1):
-                status_label = "❓ Unknown"
-                if connectivity_html:
-                    domain = addr.split('@')[-1] if '@' in addr else addr
-                    pattern = rf'class="([^"]+)\s+dot".*?<b>{_re.escape(domain)}:</b>\s*([^<]+)'
-                    match = _re.search(pattern, connectivity_html, _re.IGNORECASE)
-                    if match:
-                        color = match.group(1).lower()
-                        status_text_m = match.group(2).strip().lower()
-                        if "yellow" in color or "connecting" in status_text_m:
-                            status_label = "🟡 Connecting"
-                        elif "green" in color:
-                            status_label = "🔄 Working"
-                        elif "red" in color or "lost" in status_text_m or "error" in status_text_m:
-                            status_label = "🔴 Not connected"
-
-                reply += f"{idx}. **{status_label}:** `{addr}`\n"
-
-                s = stats_map.get(addr)
-                if s:
-                    reply += f"  📤 Sent: {s['msgs_sent']}  📥 Received: {s['msgs_received']}\n"
-                    if s.get('last_sent_at'):
-                        import datetime as _dt
-                        last_sent = _dt.datetime.fromtimestamp(s['last_sent_at']).strftime('%Y-%m-%d %H:%M')
-                        reply += f"  Last sent: {last_sent}\n"
-                    if s.get('last_received_at'):
-                        import datetime as _dt
-                        last_recv = _dt.datetime.fromtimestamp(s['last_received_at']).strftime('%Y-%m-%d %H:%M')
-                        reply += f"  Last received: {last_recv}\n"
-                else:
-                    reply += f"  📤 Sent: 0  📥 Received: 0\n"
-                reply += "\n"
-
-            reply += f"Total transports: {len(transport_addrs)}"
+            # Which relay the core really sends through, its send queue, and per-relay
+            # incoming status and storage (see transports_view.py).
+            reply = transports_view.build_transports_report(bot.rpc, accid, transports)
             bot.rpc.send_msg(accid, chat_id, MsgData(text=reply))
             return
 
