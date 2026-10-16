@@ -94,3 +94,7 @@ This binds your email address and cryptographic fingerprint to the bot.
 ```bash
 python3 -m unittest discover -s tests
 ```
+
+## License
+
+MIT, see [LICENSE](LICENSE).
