@@ -84,8 +84,9 @@ class TestPublishBot(unittest.TestCase):
         database.set_config("admin_dc_email", "admin@gluek.info")
         database.set_admin_fingerprint("A1B2C3D4E5F67890A1B2C3D4E5F67890")
 
-        self.assertTrue(database.is_authorized_sender("admin@gluek.info"))
-        self.assertTrue(database.is_authorized_sender("ADMIN@GLUEK.INFO"))
+        self.assertTrue(database.is_authorized_sender("admin@gluek.info", "A1B2C3D4E5F67890A1B2C3D4E5F67890"))
+        self.assertTrue(database.is_authorized_sender("new@relay.example", "A1B2C3D4E5F67890A1B2C3D4E5F67890"))
+        self.assertFalse(database.is_authorized_sender("admin@gluek.info"))
         self.assertFalse(database.is_authorized_sender("hacker@other.com"))
 
 

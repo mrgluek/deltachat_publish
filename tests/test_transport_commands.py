@@ -65,13 +65,19 @@ class TestTransportCommands(unittest.TestCase):
         self.mock_event.msg = self.mock_msg
         self.accid = 1
 
-        # Contact mock
+        # Contact mock. The JSON-RPC Contact has no fingerprint; the bot reads it from
+        # get_contact_encryption_info(), mocked here in the core's text format.
         self.mock_contact = {
             "address": "admin@gluek.info",
-            "fingerprint": "AABBCCDDAABBCCDDAABBCCDDAABBCCDD",
             "is_self": False,
         }
         self.mock_bot.rpc.get_contact.return_value = self.mock_contact
+        self.mock_bot.rpc.get_config.return_value = "bot@chatmail.example"
+        self.mock_bot.rpc.get_contact_encryption_info.return_value = (
+            "Messages are end-to-end encrypted.\nFingerprints:\n\n"
+            "Me (bot@chatmail.example):\n1111 2222 3333 4444\n5555 6666 7777 8888\n\n"
+            "Admin (admin@gluek.info):\nAABB CCDD AABB CCDD\nAABB CCDD AABB CCDD"
+        )
 
     def tearDown(self):
         database.DB_PATH = self.orig_db_path
@@ -194,6 +200,43 @@ class TestTransportCommands(unittest.TestCase):
             self.assertIn("/rmtransport", msg_text)
         self.assertIsNone(database.get_config("resilient"))
         self.mock_bot.rpc.set_config.assert_not_called()
+
+# Text in the format of core's Contact::get_encrinfo(): ours and the contact's key blocks.
+ENCRYPTION_INFO = (
+    "Messages are end-to-end encrypted.\n"
+    "Fingerprints:\n\n"
+    "Me (bot@chatmail.example):\n"
+    "1111 2222 3333 4444 5555\n6666 7777 8888 9999 0000\n\n"
+    "Admin (admin@relay-b.example):\n"
+    "DFF2 CAB1 FEB7 182F 997C\n0A01 466A A64D E33D 8A39\n\n"
+    "Relays:\nadmin@relay-a.example\nadmin@relay-b.example"
+)
+ADMIN_FP = "DFF2CAB1FEB7182F997C0A01466AA64DE33D8A39"
+
+
+class TestContactFingerprint(unittest.TestCase):
+    def _bot(self, info):
+        mock_bot = MagicMock()
+        mock_bot.rpc.get_contact_encryption_info.return_value = info
+        mock_bot.rpc.get_config.return_value = "bot@chatmail.example"
+        return mock_bot
+
+    def test_block_matching_contact_address(self):
+        fp = bot._get_contact_fingerprint(self._bot(ENCRYPTION_INFO), 1, 10, "Admin@Relay-B.example")
+        self.assertEqual(fp, ADMIN_FP)
+
+    def test_falls_back_to_the_block_that_is_not_ours(self):
+        fp = bot._get_contact_fingerprint(self._bot(ENCRYPTION_INFO), 1, 10, "unknown@relay-c.example")
+        self.assertEqual(fp, ADMIN_FP)
+
+    def test_contact_without_key(self):
+        self.assertIsNone(bot._get_contact_fingerprint(self._bot("No encryption."), 1, 10, "a@b.example"))
+
+    def test_rpc_error(self):
+        mock_bot = MagicMock()
+        mock_bot.rpc.get_contact_encryption_info.side_effect = Exception("boom")
+        self.assertIsNone(bot._get_contact_fingerprint(mock_bot, 1, 10, "a@b.example"))
+
 
 if __name__ == "__main__":
     unittest.main()

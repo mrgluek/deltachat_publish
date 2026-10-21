@@ -2,6 +2,11 @@
 
 All notable changes to the `deltachat_publish` project will be documented in this file.
 
+## [1.2.2] - 2026-10-21
+
+### Fixed
+- **Admin Lost Access After Adding a Relay**: The bot read the sender's fingerprint from a `fingerprint` field that the JSON-RPC `Contact` object does not have, so the fingerprint was always empty and the admin was recognised by email address only. Since core 2.61 the client sends from its newest relay, so after the admin added a relay their address changed and publishing was denied. The fingerprint is now read from `get_contact_encryption_info()`, and when an admin fingerprint is configured only the key is checked, whatever address the message comes from. The address is checked only when no fingerprint is configured.
+
 ## [1.2.1] - 2026-10-16
 - **MIT License**: the project is now licensed under MIT (`LICENSE`).
 

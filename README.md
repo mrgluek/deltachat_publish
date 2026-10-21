@@ -22,7 +22,7 @@ Following **IndieWeb / POSSE** principles, your Git repository remains the singl
 ## 🔒 Security & Encryption Architecture
 
 - **End-to-End Encryption (E2EE)**: All communication between the Delta Chat client and the bot is fully encrypted using OpenPGP / Autocrypt over Chatmail.
-- **Cryptographic Fingerprint & Email Verification**: The bot strictly verifies the sender's email AND cryptographic OpenPGP fingerprint against `database.is_authorized_sender(...)` initialized via `/initadmin` or `set_admin.py`. Unauthorized publish attempts are immediately rejected (`⛔ Access Denied`).
+- **Key-Based Admin Verification**: The sender's OpenPGP key fingerprint (read from the core's encryption info) is checked against the admin fingerprint set via `/initadmin`, `set_admin.py` or `ADMIN_DC_FINGERPRINT`. When a fingerprint is configured, only the key counts, so the admin keeps access whichever relay their client sends from; the email address is checked only if no fingerprint is configured. Unauthorized publish attempts are immediately rejected (`⛔ Access Denied`).
 - **Protected API Credentials**: Forgejo API personal access tokens (`FORGEJO_TOKEN`) are strictly isolated inside server environment variables (`.env`) and never exposed over chat or client logs.
 
 ---
@@ -85,7 +85,7 @@ In private chat with the bot, send:
 ```text
 /initadmin
 ```
-This binds your email address and cryptographic fingerprint to the bot.
+This binds your email address and key fingerprint to the bot. Once a fingerprint is bound, you stay the admin even if your client starts sending from another relay address.
 
 ---
 

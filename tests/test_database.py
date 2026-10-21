@@ -120,6 +120,30 @@ class TestDatabase(unittest.TestCase):
             "admin@gluek.info", "DEADBEEFDEADBEEFDEADBEEFDEADBEEF"
         ))
 
+    def test_fingerprint_authorizes_from_any_relay_address(self):
+        # With several relays the admin may send from another address; the key decides.
+        database.set_config("admin_dc_email", "admin@gluek.info")
+        database.set_admin_fingerprint("AABBCCDDAABBCCDDAABBCCDDAABBCCDD")
+        self.assertTrue(database.is_authorized_sender(
+            "admin@other-relay.example", "aabb ccdd aabb ccdd aabb ccdd aabb ccdd"
+        ))
+
+    def test_fingerprint_configured_requires_key(self):
+        # Address alone is not enough once a fingerprint is configured (e.g. unencrypted mail).
+        database.set_config("admin_dc_email", "admin@gluek.info")
+        database.set_admin_fingerprint("AABBCCDDAABBCCDDAABBCCDDAABBCCDD")
+        self.assertFalse(database.is_authorized_sender("admin@gluek.info"))
+        self.assertFalse(database.is_authorized_sender("admin@gluek.info", ""))
+
+    def test_normalize_fingerprint(self):
+        self.assertEqual(
+            database.normalize_fingerprint("aabb ccdd\naabb ccdd:aabb ccdd aabb ccdd"),
+            "AABBCCDDAABBCCDDAABBCCDDAABBCCDD",
+        )
+        self.assertIsNone(database.normalize_fingerprint(""))
+        self.assertIsNone(database.normalize_fingerprint(None))
+        self.assertIsNone(database.normalize_fingerprint("not-a-fingerprint"))
+
     # --- Published posts ---
 
     def test_log_and_get_recent_posts(self):

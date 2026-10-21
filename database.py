@@ -90,15 +90,19 @@ def get_admin_email() -> Optional[str]:
     return env_val.strip().lower() if env_val else None
 
 
+def normalize_fingerprint(fp) -> Optional[str]:
+    """Returns an OpenPGP fingerprint as uppercase hex without separators, or None if it is not one."""
+    if not isinstance(fp, str):
+        return None
+    cleaned = re.sub(r"[\s:]", "", fp).upper()
+    return cleaned if re.fullmatch(r"[0-9A-F]{32,64}", cleaned) else None
+
+
 def get_admin_fingerprint() -> Optional[str]:
     fp = get_config("admin_dc_fingerprint")
     if not fp:
         fp = os.getenv("ADMIN_DC_FINGERPRINT", "")
-    if fp:
-        cleaned = fp.strip().replace(" ", "").replace(":", "").upper()
-        if re.match(r"^[0-9A-F]{32,64}$", cleaned):
-            return cleaned
-    return None
+    return normalize_fingerprint(fp)
 
 
 def set_admin_fingerprint(fp: str):
@@ -112,6 +116,10 @@ def set_admin_fingerprint(fp: str):
 def is_authorized_sender(sender_addr: str, fingerprint: Optional[str] = None) -> bool:
     """
     Checks if incoming sender address / fingerprint matches configured admin.
+
+    When the admin's key fingerprint is known, only the key counts: with several relays the
+    core sends from whichever relay works, so the admin's address changes while the key stays.
+    The address is checked only when no fingerprint is configured.
     """
     admin_email = get_admin_email()
     admin_fp = get_admin_fingerprint()
@@ -120,19 +128,10 @@ def is_authorized_sender(sender_addr: str, fingerprint: Optional[str] = None) ->
     if not admin_email and not admin_fp:
         return False
 
-    sender_addr_clean = (sender_addr or "").strip().lower()
+    if admin_fp:
+        return normalize_fingerprint(fingerprint) == admin_fp
 
-    if admin_email and sender_addr_clean == admin_email:
-        if admin_fp and fingerprint:
-            fp_clean = fingerprint.strip().replace(" ", "").replace(":", "").upper()
-            return fp_clean == admin_fp
-        return True
-
-    if admin_fp and fingerprint:
-        fp_clean = fingerprint.strip().replace(" ", "").replace(":", "").upper()
-        return fp_clean == admin_fp
-
-    return False
+    return (sender_addr or "").strip().lower() == admin_email
 
 
 def log_published_post(slug: str, title: str, commit_sha: str = ""):
