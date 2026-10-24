@@ -73,19 +73,42 @@ BLOG_IMAGE_URL_PREFIX=/images
 ADMIN_DC_EMAIL=gluek@gluek.info
 ```
 
-### 2. Docker Compose Deployment
+### 2. Configure Email and Admin (Optional)
+Skip this step and the bot creates its account by itself at first start: the Delta Chat core (2.62+) picks the fastest chatmail relay from its built-in list and later adds further relays in the background. `RELAY` or `ADDR`/`MAIL_PW` in `.env` are still used for that first account when set.
+
+To choose the account yourself, initialize it with your email and password, or with `DCACCOUNT:server.tld` for an account on a specific chatmail relay:
+```bash
+docker compose run --rm deltachat_publish python bot.py init publishbot@yourdomain.com "your_email_password"
+docker compose run --rm deltachat_publish python bot.py init DCACCOUNT:server.tld
+```
+
+Configure your admin email address and your cryptographic fingerprint on the server (or do it later inside the bot chat with the `/initadmin` command, see step 4):
+```bash
+docker compose run --rm deltachat_publish python set_admin.py --email admin@yourdomain.com
+docker compose run --rm deltachat_publish python set_admin.py --fingerprint 1234ABCD1234ABCD1234ABCD1234ABCD1234ABCD
+```
+
+### 3. Docker Compose Deployment
 
 ```bash
 docker compose up -d --build
 ```
 
-### 3. Claim Administrator Ownership
+The bot's invite QR code and link are printed in the logs (`docker compose logs deltachat_publish`).
+
+### 4. Claim Administrator Ownership
 
 In private chat with the bot, send:
 ```text
 /initadmin
 ```
 This binds your email address and key fingerprint to the bot. Once a fingerprint is bound, you stay the admin even if your client starts sending from another relay address.
+
+### 5. Updates
+
+Run `./update.sh` (e.g. from cron) to deploy the newest release: the highest `vX.Y.Z` tag, from GitHub or, when GitHub is unreachable, from the Forgejo mirror; `-f` rebuilds the container without changes. Commits on `main` that are not released yet are not deployed. In `.env.local`, `UPDATE_REF=v1.2.2` stays on that release (to roll back; remove it to follow new releases again), `UPDATE_REF=main` follows the branch, and `MONITOR_URL` (in `.env` or `.env.local`) pings a healthcheck on start, success and failure. Pushing a `vX.Y.Z` tag publishes the GitHub release with that version's `CHANGELOG.md` section.
+
+Releasing: merge, then `git tag -a vX.Y.Z -m "..." <commit> && git push origin vX.Y.Z`.
 
 ---
 

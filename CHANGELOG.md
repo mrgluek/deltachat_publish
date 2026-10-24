@@ -2,6 +2,18 @@
 
 All notable changes to the `deltachat_publish` project will be documented in this file.
 
+## [1.3.0] - 2026-10-24
+
+### Added
+- **Automatic Account Creation**: `bot.py serve` without a configured account now creates one by itself, so a new bot needs no `init` step. Without `RELAY` or `ADDR`/`MAIL_PW` in the environment the Delta Chat core (2.62+, `init_transports`) probes its built-in chatmail relay list, configures the fastest relay and later adds further relays in the background; `RELAY` and `ADDR`/`MAIL_PW` are still used when set (`RELAY` no longer defaults to `chatmail.uk`). A failure is logged and `serve` exits, so the container restart retries. Account setup now runs only for `serve`: before, any command (also `bot.py init <addr> <password>`) first configured a `chatmail.uk` account. `bot.py init <addr> <password>` and `bot.py init DCACCOUNT:server.tld` keep working and take precedence. Unit tests in `tests/test_auto_account.py` (mocked RPC).
+
+### Changed
+- **The server runs releases, not the tip of `main`.** `update.sh` deploys the newest `vX.Y.Z` tag, so a merge into `main` reaches the server only once it is released; several PRs can go out together. `UPDATE_REF` in `.env.local` pins a release (`UPDATE_REF=v1.2.2` - a rollback; empty again = newest) or follows a branch as before (`UPDATE_REF=main`). A release tag moved on GitHub or Forgejo makes the update fail instead of deploying the changed code. Errors that stopped the script with a message (both remotes unreachable, an unknown `UPDATE_REF`) now also ping the healthcheck's `/fail`, not only failed commands. The script now runs as one function, so the `git reset` that rewrites `update.sh` cannot confuse the running copy.
+- **Releases are published by a tag** (new `.github/workflows/release.yml`): pushing `vX.Y.Z` checks that `bot.py` has that version, creates the GitHub release with the version's section of this file as its notes (an existing release is left alone), then sends the ntfy notification and the `bot-updated` dispatch to `hass-addons-deltachat` (now with `"version"` in the payload). Both used to go out on every push to `main` (`publish-changelog.yml`, removed), so Home Assistant users got unreleased code.
+- **README**: the "Configure Email and Admin" step is optional; added the update and release notes.
+- Releasing: merge, then `git tag -a vX.Y.Z -m "..." <commit> && git push origin vX.Y.Z`.
+- **Upgrading:** tag `v1.3.0` right after merging this. Until then the new `update.sh` would deploy `v1.2.2`, which still has the old script that follows `main` - and the server would switch back and forth on every run.
+
 ## [1.2.2] - 2026-10-21
 
 ### Fixed
