@@ -19,7 +19,7 @@ import transports_view
 from forgejo_client import ForgejoClient
 from post_builder import parse_message_text, build_post_files_payload
 
-VERSION = "1.2.2"
+VERSION = "1.3.0"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("deltachat_publish")
@@ -439,8 +439,52 @@ def on_new_message(bot, accid: int, event):
         bot.rpc.send_msg(accid, chat_id, MsgData(text=err_reply))
 
 
+def ensure_configured_account(bot, args) -> None:
+    """On `serve` without a configured account, create one so a new bot needs no `init` step.
+
+    ADDR/MAIL_PW (an existing email account) or RELAY (a chatmail relay) from the environment are
+    used when set. Otherwise init_transports (core 2.62+) with no QR code probes the core's built-in
+    chatmail relay list, configures the fastest one and later adds further relays in the background.
+    An explicit `bot.py init <addr> <password>` or `bot.py init DCACCOUNT:...` still works and takes
+    precedence."""
+    if getattr(getattr(args, "cmd", None), "__name__", "") != "_serve_cmd":
+        return
+    accids = [args.account] if getattr(args, "account", None) else bot.rpc.get_all_account_ids()
+    if any(bot.rpc.is_configured(a) for a in accids):
+        return
+    accid = accids[0] if accids else bot.rpc.add_account()
+    try:
+        bot.rpc.set_config(accid, "bot", "1")
+        addr = (os.getenv("ADDR") or "").strip()
+        mail_pw = os.getenv("MAIL_PW")
+        relay = (os.getenv("RELAY") or "").strip()
+        if addr and mail_pw:
+            bot.logger.info(f"No configured account: configuring {addr} from ADDR/MAIL_PW...")
+            params = {"addr": addr, "password": mail_pw}
+            mail_server = os.getenv("MAIL_SERVER")
+            mail_port = os.getenv("MAIL_PORT")
+            if mail_server:
+                params["mail_server"] = mail_server
+            if mail_port:
+                params["mail_port"] = mail_port
+            bot.rpc.add_or_update_transport(accid, params)
+        elif relay:
+            bot.logger.info(f"No configured account: creating one on relay '{relay}' (RELAY)...")
+            qr_uri = relay if (relay.startswith("DCACCOUNT:") or relay.startswith("http")) else f"DCACCOUNT:{relay}"
+            bot.rpc.add_transport_from_qr(accid, qr_uri)
+        else:
+            bot.logger.info("No configured account: creating one on a chatmail relay chosen by the core...")
+            bot.rpc.init_transports(accid, None)
+        bot.logger.info(f"Account created: {bot.rpc.get_config(accid, 'configured_addr')}")
+    except Exception as e:
+        # serve then exits with "no configured accounts" and the container restart retries
+        bot.logger.error(f"Automatic account creation failed: {e}")
+
+
 @dc_cli.on_init
-def on_init(bot, _args):
+def on_init(bot, args):
+    ensure_configured_account(bot, args)
+
     accounts = bot.rpc.get_all_account_ids()
     if not accounts:
         accid = bot.rpc.add_account()
@@ -493,29 +537,6 @@ def on_init(bot, _args):
         if os.path.exists(path):
             bot.rpc.set_config(accid, "selfavatar", path)
             break
-
-    if not bot.rpc.is_configured(accid):
-        bot.rpc.set_config(accid, "bot", "1")
-        relay = os.getenv("RELAY", "chatmail.uk").strip()
-        addr = os.getenv("ADDR")
-        mail_pw = os.getenv("MAIL_PW")
-
-        if addr and mail_pw:
-            bot.logger.info(f"Configuring account for {addr}...")
-            params = {"addr": addr, "password": mail_pw}
-            mail_server = os.getenv("MAIL_SERVER")
-            mail_port = os.getenv("MAIL_PORT")
-            if mail_server:
-                params["mail_server"] = mail_server
-            if mail_port:
-                params["mail_port"] = mail_port
-            bot.rpc.add_or_update_transport(accid, params)
-        elif relay:
-            bot.logger.info(f"Auto-creating new chatmail account on relay '{relay}'...")
-            qr_uri = relay if (relay.startswith("DCACCOUNT:") or relay.startswith("http")) else f"DCACCOUNT:{relay}"
-            bot.rpc.add_transport_from_qr(accid, qr_uri)
-        else:
-            bot.logger.error("No account credentials (ADDR/MAIL_PW) or RELAY set!")
 
 
 @dc_cli.on_start
