@@ -20,7 +20,7 @@ import transports_view
 from forgejo_client import ForgejoClient
 from post_builder import parse_message_text, build_post_files_payload
 
-VERSION = "1.3.1"
+VERSION = "1.4.0"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("deltachat_publish")
@@ -444,7 +444,7 @@ def ensure_configured_account(bot, args) -> None:
         else:
             bot.logger.info("No configured account: creating one on a chatmail relay chosen by the core...")
             bot.rpc.init_transports(accid, None)
-        bot.logger.info(f"Account created: {bot.rpc.get_config(accid, 'configured_addr')}")
+        bot.logger.info(f"Account created: {dc_fingerprint.get_self_addr(bot.rpc, accid)}")
     except Exception as e:
         # serve then exits with "no configured accounts" and the container restart retries
         bot.logger.error(f"Automatic account creation failed: {e}")
