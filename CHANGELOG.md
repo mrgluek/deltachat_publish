@@ -2,6 +2,12 @@
 
 All notable changes to the `deltachat_publish` project will be documented in this file.
 
+## [1.3.1] - 2026-10-28
+
+### Changed
+- **Fingerprint Lookup Ready for Core 2.66**: The contact's key block was picked by its address in the header, which core 2.66 no longer prints. It is now the one block that is not the bot's own key, recognised by the fingerprint in the bot's invite link (`dc_fingerprint.py`, shared between the bots).
+- **Core Pinned to 2.65.0**: `deltachat-rpc-server` was `>=2.62.0`, so any image rebuild pulled core 2.66.0, which removes the `configured_addr` option the bot still reads. Core upgrades are now made on purpose, after reading the core changelog.
+
 ## [1.3.0] - 2026-10-24
 
 ### Added

@@ -15,11 +15,12 @@ from deltachat2 import events, MsgData
 from deltabot_cli import BotCli
 
 import database
+import dc_fingerprint
 import transports_view
 from forgejo_client import ForgejoClient
 from post_builder import parse_message_text, build_post_files_payload
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("deltachat_publish")
@@ -78,42 +79,10 @@ def _is_private_chat(bot, accid: int, chat_id: int) -> bool:
 
 
 def _get_contact_fingerprint(bot, accid: int, contact_id: int, contact_addr: str = "") -> Optional[str]:
-    """Returns the OpenPGP fingerprint the core holds for a contact, or None if it has no key.
+    """The contact's key fingerprint, or None if it has no key; see dc_fingerprint.
 
-    The JSON-RPC Contact object has no fingerprint field, so it is read from
-    get_contact_encryption_info(): one block per key, "<name> (<addr>):" followed by the
-    fingerprint in groups of four, ours and the contact's. The contact's block is the one with
-    its address; if none matches, the single block that is not ours (configured_addr) is used.
-    """
-    try:
-        info = bot.rpc.get_contact_encryption_info(accid, contact_id)
-    except Exception as e:
-        logger.debug(f"get_contact_encryption_info failed: {e}")
-        return None
-    if not isinstance(info, str):
-        return None
-
-    blocks = []  # (address from the header, fingerprint)
-    for block in info.split("\n\n"):
-        lines = block.strip().splitlines()
-        if len(lines) < 2:
-            continue
-        header = re.search(r"\(([^()\s]+)\):$", lines[0])
-        fp = database.normalize_fingerprint("".join(lines[1:]))
-        if header and fp:
-            blocks.append((header.group(1).lower(), fp))
-
-    addr = (contact_addr or "").strip().lower()
-    for block_addr, fp in blocks:
-        if addr and block_addr == addr:
-            return fp
-
-    try:
-        self_addr = (bot.rpc.get_config(accid, "configured_addr") or "").strip().lower()
-    except Exception:
-        self_addr = ""
-    others = [fp for block_addr, fp in blocks if block_addr != self_addr]
-    return others[0] if len(others) == 1 else None
+    `contact_addr` is unused: core 2.66 no longer prints addresses in the encryption info."""
+    return dc_fingerprint.get_contact_fingerprint(bot.rpc, accid, contact_id)
 
 
 def get_help_message() -> str:

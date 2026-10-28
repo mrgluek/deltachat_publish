@@ -46,6 +46,8 @@ import database
 import bot
 
 TEST_DB_PATH = "test_publish_cmds.db"
+# The bot's own invite link: dc_fingerprint recognises our key block by its fingerprint
+BOT_INVITE = "https://i.delta.chat/#1111222233334444555566667777888899990000&v=3&i=a&s=b"
 
 
 class TestTransportCommands(unittest.TestCase):
@@ -73,10 +75,11 @@ class TestTransportCommands(unittest.TestCase):
         }
         self.mock_bot.rpc.get_contact.return_value = self.mock_contact
         self.mock_bot.rpc.get_config.return_value = "bot@chatmail.example"
+        self.mock_bot.rpc.get_chat_securejoin_qr_code.return_value = BOT_INVITE
         self.mock_bot.rpc.get_contact_encryption_info.return_value = (
             "Messages are end-to-end encrypted.\nFingerprints:\n\n"
-            "Me (bot@chatmail.example):\n1111 2222 3333 4444\n5555 6666 7777 8888\n\n"
-            "Admin (admin@gluek.info):\nAABB CCDD AABB CCDD\nAABB CCDD AABB CCDD"
+            "Me (bot@chatmail.example):\n1111 2222 3333 4444 5555\n6666 7777 8888 9999 0000\n\n"
+            "Admin (admin@gluek.info):\nAABB CCDD AABB CCDD AABB\nCCDD AABB CCDD AABB CCDD"
         )
 
     def tearDown(self):
@@ -109,7 +112,7 @@ class TestTransportCommands(unittest.TestCase):
         bot.on_new_message(self.mock_bot, self.accid, self.mock_event)
 
         self.assertEqual(database.get_admin_email(), "admin@gluek.info")
-        self.assertEqual(database.get_admin_fingerprint(), "AABBCCDDAABBCCDDAABBCCDDAABBCCDD")
+        self.assertEqual(database.get_admin_fingerprint(), "AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD")
         self.mock_bot.rpc.send_msg.assert_called_once()
         msg_text = self.mock_bot.rpc.send_msg.call_args[0][2].text
         self.assertIn("Ownership successfully claimed", msg_text)
@@ -145,7 +148,7 @@ class TestTransportCommands(unittest.TestCase):
     def test_addtransport_rejected_in_group_chat(self, mock_is_private):
         mock_is_private.return_value = False
         database.set_config("admin_dc_email", "admin@gluek.info")
-        database.set_admin_fingerprint("AABBCCDDAABBCCDDAABBCCDDAABBCCDD")
+        database.set_admin_fingerprint("AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD")
         self.mock_msg.text = "/addtransport user@example.com pass123"
 
         bot.on_new_message(self.mock_bot, self.accid, self.mock_event)
@@ -158,7 +161,7 @@ class TestTransportCommands(unittest.TestCase):
     def test_addtransport_success_in_private_chat(self, mock_is_private):
         mock_is_private.return_value = True
         database.set_config("admin_dc_email", "admin@gluek.info")
-        database.set_admin_fingerprint("AABBCCDDAABBCCDDAABBCCDDAABBCCDD")
+        database.set_admin_fingerprint("AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD")
         self.mock_msg.text = "/addtransport backup@example.com pass123"
 
         bot.on_new_message(self.mock_bot, self.accid, self.mock_event)
@@ -174,7 +177,7 @@ class TestTransportCommands(unittest.TestCase):
     def test_addtransport_error_sanitized(self, mock_is_private):
         mock_is_private.return_value = True
         database.set_config("admin_dc_email", "admin@gluek.info")
-        database.set_admin_fingerprint("AABBCCDDAABBCCDDAABBCCDDAABBCCDD")
+        database.set_admin_fingerprint("AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD")
         self.mock_msg.text = "/addtransport backup@example.com pass123"
         self.mock_bot.rpc.add_or_update_transport.side_effect = RuntimeError("secret server database crashed")
 
@@ -189,7 +192,7 @@ class TestTransportCommands(unittest.TestCase):
 
     def test_deprecated_relay_commands(self):
         database.set_config("admin_dc_email", "admin@gluek.info")
-        database.set_admin_fingerprint("AABBCCDDAABBCCDDAABBCCDDAABBCCDD")
+        database.set_admin_fingerprint("AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD")
 
         for cmd in ("/resilient on", "/setprimary relay@example.org"):
             self.mock_bot.rpc.send_msg.reset_mock()
@@ -212,21 +215,33 @@ ENCRYPTION_INFO = (
     "Relays:\nadmin@relay-a.example\nadmin@relay-b.example"
 )
 ADMIN_FP = "DFF2CAB1FEB7182F997C0A01466AA64DE33D8A39"
+# Core 2.66+: no addresses in the headers, blocks sorted by fingerprint
+ENCRYPTION_INFO_266 = (
+    "Messages are end-to-end encrypted.\n"
+    "Fingerprints:\n\n"
+    "Me:\n"
+    "1111 2222 3333 4444 5555\n6666 7777 8888 9999 0000\n\n"
+    "Admin:\n"
+    "DFF2 CAB1 FEB7 182F 997C\n0A01 466A A64D E33D 8A39\n\n"
+    "Relays:\nadmin@relay-a.example\nadmin@relay-b.example"
+)
 
 
 class TestContactFingerprint(unittest.TestCase):
     def _bot(self, info):
         mock_bot = MagicMock()
         mock_bot.rpc.get_contact_encryption_info.return_value = info
-        mock_bot.rpc.get_config.return_value = "bot@chatmail.example"
+        mock_bot.rpc.get_chat_securejoin_qr_code.return_value = BOT_INVITE
         return mock_bot
 
-    def test_block_matching_contact_address(self):
-        fp = bot._get_contact_fingerprint(self._bot(ENCRYPTION_INFO), 1, 10, "Admin@Relay-B.example")
-        self.assertEqual(fp, ADMIN_FP)
+    def test_block_that_is_not_ours(self):
+        # The contact's address does not matter: its block is the one without our key
+        for addr in ("Admin@Relay-B.example", "unknown@relay-c.example", ""):
+            fp = bot._get_contact_fingerprint(self._bot(ENCRYPTION_INFO), 1, 10, addr)
+            self.assertEqual(fp, ADMIN_FP)
 
-    def test_falls_back_to_the_block_that_is_not_ours(self):
-        fp = bot._get_contact_fingerprint(self._bot(ENCRYPTION_INFO), 1, 10, "unknown@relay-c.example")
+    def test_core_266_format(self):
+        fp = bot._get_contact_fingerprint(self._bot(ENCRYPTION_INFO_266), 1, 10, "admin@relay-b.example")
         self.assertEqual(fp, ADMIN_FP)
 
     def test_contact_without_key(self):
