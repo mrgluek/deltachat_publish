@@ -2,6 +2,11 @@
 
 All notable changes to the `deltachat_publish` project will be documented in this file.
 
+## [1.4.1] - 2026-11-23
+
+### Fixed
+- **Own Fingerprint Lookup Cached**: `dc_fingerprint.get_self_fingerprint()` called `get_chat_securejoin_qr_code` on every incoming message (the bot reads the sender's fingerprint before any command parse), and every such call mints a new invite token in the Delta Chat core that is never pruned. The bot's own fingerprint is now asked once per account and process (cached per rpc object, failures are not cached, `forget_self_fingerprint()` drops it, no lock is held across the RPC). `dc_fingerprint.py` is the same file as in the uptime bot 3.0.2. Measured with a fake RPC through `on_new_message`, 1,000 incoming messages: 1,000 `get_chat_securejoin_qr_code` calls before, 1 after. New tests in `tests/test_fingerprint_cache.py` (fail on 1.4.0).
+
 ## [1.4.0] - 2026-10-28
 
 ### Changed
